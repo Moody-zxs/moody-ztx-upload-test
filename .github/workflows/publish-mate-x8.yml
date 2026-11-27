@@ -1,0 +1,62 @@
+name: Publish Mate X8 viewer
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish to GitHub Pages
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Prepare and verify the existing Mate X8 V12 release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          expected=33ffd8a44a56ebc606ef1a8b22748411d8186b19d4b2f1069c6056b95c9a3148
+          asset_id=$(
+            gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
+            jq -sr --arg digest "sha256:$expected" '
+              [.[][] | .assets[]? | select(.name == "mate-x8-v12.html" and .digest == $digest) | .id]
+              | first // empty
+            '
+          )
+          if [[ ! "$asset_id" =~ ^[0-9]+$ ]]; then
+            echo 'The verified Mate X8 V12 release asset is unavailable to this workflow.' >&2
+            exit 1
+          fi
+          mkdir -p site
+          asset_path="repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
+          gh api -H 'Accept: application/octet-stream' "$asset_path" > site/index.html
+          printf '%s  %s\n' "$expected" site/index.html | sha256sum --check
+      - name: Package the Pages site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    if: ${{ inputs.publish }}
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.publish.outputs.page_url }}
+    steps:
+      - name: Publish to GitHub Pages
+        id: publish
+        uses: actions/deploy-pages@v4
