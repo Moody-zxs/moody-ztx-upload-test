@@ -1,10 +1,10 @@
-name: Publish Mate X8 viewer
+name: 发布 3D 模型
 
 on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Publish to GitHub Pages
+        description: 发布到 GitHub Pages
         type: boolean
         default: false
 
@@ -20,27 +20,29 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Prepare and verify the existing Mate X8 V12 release asset
+      - name: Prepare and verify model.html
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          expected=33ffd8a44a56ebc606ef1a8b22748411d8186b19d4b2f1069c6056b95c9a3148
-          asset_id=$(
-            gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" |
-            jq -sr --arg digest "sha256:$expected" '
-              [.[][] | .assets[]? | select(.name == "mate-x8-v12.html" and .digest == $digest) | .id]
-              | first // empty
-            '
-          )
-          if [[ ! "$asset_id" =~ ^[0-9]+$ ]]; then
-            echo 'The verified Mate X8 V12 release asset is unavailable to this workflow.' >&2
+          release=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest")
+          asset=$(jq -c '.assets[] | select(.name == "model.html" and .state == "uploaded")' <<< "$release")
+          if [[ -z "$asset" ]]; then
+            echo 'The latest release must include an uploaded model.html asset.' >&2
             exit 1
           fi
+
+          asset_id=$(jq -er '.id' <<< "$asset")
+          digest=$(jq -er '.digest' <<< "$asset")
+          if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo 'GitHub did not provide a SHA-256 checksum for model.html.' >&2
+            exit 1
+          fi
+
           mkdir -p site
           asset_path="repos/$GITHUB_REPOSITORY/releases/assets/$asset_id"
           gh api -H 'Accept: application/octet-stream' "$asset_path" > site/index.html
-          printf '%s  %s\n' "$expected" site/index.html | sha256sum --check
+          printf '%s  %s\n' "${digest#sha256:}" site/index.html | sha256sum --check
       - name: Package the Pages site
         uses: actions/upload-pages-artifact@v3
         with:
